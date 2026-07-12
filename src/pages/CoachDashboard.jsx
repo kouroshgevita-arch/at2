@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
-  Plus, ChevronRight, Search, X, LogOut, Loader2, Copy, Check, TrendingUp,
+  Plus, ChevronRight, Search, X, LogOut, Loader2, Copy, Check, TrendingUp, Library as LibraryIcon, Users,
 } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { suggestNext, uid, todayISO } from '../lib/suggestionEngine'
@@ -12,6 +12,7 @@ export default function CoachDashboard({ profile }) {
   const [view, setView] = useState('overview')
   const [showNewClient, setShowNewClient] = useState(false)
   const [search, setSearch] = useState('')
+  const [mode, setMode] = useState('clients') // clients | library
 
   useEffect(() => {
     loadClients()
@@ -69,6 +70,23 @@ export default function CoachDashboard({ profile }) {
           <div className="display-heading" style={{ fontSize: 24 }}>YOUR ROSTER</div>
         </div>
 
+        <div style={{ display: 'flex', gap: 4, padding: 12, borderBottom: '1px solid var(--border)' }}>
+          <button
+            onClick={() => setMode('clients')}
+            className={mode === 'clients' ? 'btn btn-primary' : 'btn btn-ghost'}
+            style={{ flex: 1, fontSize: 13 }}
+          >
+            <Users size={14} /> Clients
+          </button>
+          <button
+            onClick={() => { setMode('library'); setSelectedId(null) }}
+            className={mode === 'library' ? 'btn btn-primary' : 'btn btn-ghost'}
+            style={{ flex: 1, fontSize: 13 }}
+          >
+            <LibraryIcon size={14} /> Library
+          </button>
+        </div>
+
         <div style={{ padding: 12 }}>
           <button onClick={() => setShowNewClient(true)} className="btn btn-primary" style={{ width: '100%' }}>
             <Plus size={16} /> Add Client
@@ -102,7 +120,7 @@ export default function CoachDashboard({ profile }) {
           {filteredClients.map((c) => (
             <button
               key={c.id}
-              onClick={() => { setSelectedId(c.id); setView('overview') }}
+              onClick={() => { setSelectedId(c.id); setView('overview'); setMode('clients') }}
               className={`client-row ${selectedId === c.id ? 'active' : ''}`}
             >
               <div style={{ minWidth: 0 }}>
@@ -124,7 +142,9 @@ export default function CoachDashboard({ profile }) {
       </div>
 
       <div className="main-content">
-        {!client ? (
+        {mode === 'library' ? (
+          <WorkoutLibrary profile={profile} />
+        ) : !client ? (
           <div className="center-screen" style={{ minHeight: '60vh' }}>
             <div style={{ color: 'var(--text-muted)', fontSize: 14, textAlign: 'center' }}>
               Select a client on the left, or add a new one to get started.
@@ -694,6 +714,134 @@ function NewClientModal({ onClose, onSave }) {
           <button disabled={!canSave} onClick={() => onSave({ name, goal, painAreas, notes })} className="btn btn-primary" style={{ flex: 1 }}>Add Client</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ---------- Workout Library (top-level area, not tied to any one client) ----------
+function WorkoutLibrary({ profile }) {
+  const [tab, setTab] = useState('exercises')
+
+  return (
+    <div style={{ maxWidth: 700 }}>
+      <div className="display-heading" style={{ fontSize: 30, marginBottom: 4 }}>WORKOUT LIBRARY</div>
+      <div style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 24 }}>
+        Build once here, reuse across any client.
+      </div>
+
+      <div className="tabs">
+        <button className={`tab ${tab === 'exercises' ? 'active' : ''}`} onClick={() => setTab('exercises')}>
+          Exercises
+        </button>
+        {/* Workout Templates tab lands here next round */}
+      </div>
+
+      {tab === 'exercises' && <ExerciseLibrary profile={profile} />}
+    </div>
+  )
+}
+
+function ExerciseLibrary({ profile }) {
+  const [exercises, setExercises] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [name, setName] = useState('')
+  const [category, setCategory] = useState('')
+  const [defaultUnit, setDefaultUnit] = useState('reps')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  const load = async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('exercise_library')
+      .select('*')
+      .eq('coach_id', profile.id)
+      .order('name', { ascending: true })
+    if (!error) setExercises(data)
+    setLoading(false)
+  }
+
+  const handleAdd = async () => {
+    if (!name.trim()) return
+    setSaving(true)
+    const { data, error } = await supabase
+      .from('exercise_library')
+      .insert({
+        coach_id: profile.id,
+        name: name.trim(),
+        category: category.trim() || null,
+        default_unit: defaultUnit,
+      })
+      .select()
+      .single()
+    if (!error) {
+      setExercises((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)))
+      setName(''); setCategory(''); setDefaultUnit('reps')
+    }
+    setSaving(false)
+  }
+
+  const handleDelete = async (id) => {
+    const { error } = await supabase.from('exercise_library').delete().eq('id', id)
+    if (!error) setExercises((prev) => prev.filter((e) => e.id !== id))
+  }
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 24 }}>
+        <div className="label">Add an exercise</div>
+        <div style={{ marginBottom: 12 }}>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Barbell Squat" />
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <input
+            className="input"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            placeholder="Category (optional) — e.g. Lower body"
+          />
+          <select
+            className="input"
+            value={defaultUnit}
+            onChange={(e) => setDefaultUnit(e.target.value)}
+            style={{ maxWidth: 150, flexShrink: 0 }}
+          >
+            <option value="reps">Reps</option>
+            <option value="sec">Seconds</option>
+            <option value="min">Minutes</option>
+          </select>
+        </div>
+        <button onClick={handleAdd} disabled={!name.trim() || saving} className="btn btn-primary" style={{ width: '100%' }}>
+          {saving ? <Loader2 className="spin" size={16} /> : 'Add to Library'}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="loading-row"><Loader2 className="spin" size={16} /> <span>loading…</span></div>
+      ) : exercises.length === 0 ? (
+        <div style={{ color: 'var(--text-dim)', fontSize: 14, padding: 24, textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 8 }}>
+          No exercises yet — add your first one above.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {exercises.map((ex) => (
+            <div key={ex.id} className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 14 }}>{ex.name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {ex.category || 'Uncategorized'} · logged in {ex.default_unit}
+                </div>
+              </div>
+              <button onClick={() => handleDelete(ex.id)} className="btn btn-ghost" style={{ padding: 6, border: 'none' }}>
+                <X size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
